@@ -92,6 +92,14 @@ st.markdown("""
         text-align: center;
         margin: 2rem 0;
     }
+    .warning-box {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+        color: #856404;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -151,6 +159,39 @@ def load_data():
         
         return contract_start, initial_balance, work_periods, sick_periods
     except FileNotFoundError:
+        return None, 0, [], []
+
+def import_data(uploaded_file):
+    """Import data from uploaded JSON file"""
+    try:
+        data = json.load(uploaded_file)
+        
+        # Load contract start date
+        contract_start = None
+        if data.get('contract_start'):
+            contract_start = datetime.date.fromisoformat(data['contract_start'])
+        
+        # Load initial balance
+        initial_balance = data.get('initial_balance', 0)
+        
+        # Load work periods
+        work_periods = []
+        for period in data.get('work_periods', []):
+            if len(period) == 3:  # With location
+                start_str, end_str, location = period
+                work_periods.append((datetime.date.fromisoformat(start_str), datetime.date.fromisoformat(end_str), location))
+            else:  # Old format
+                start_str, end_str = period
+                work_periods.append((datetime.date.fromisoformat(start_str), datetime.date.fromisoformat(end_str), ""))
+        
+        # Load sick periods
+        sick_periods = []
+        for start_str, end_str in data.get('sick_periods', []):
+            sick_periods.append((datetime.date.fromisoformat(start_str), datetime.date.fromisoformat(end_str)))
+        
+        return contract_start, initial_balance, work_periods, sick_periods
+    except Exception as e:
+        st.error(f"❌ خطأ في استيراد الملف: {str(e)}")
         return None, 0, [], []
 
 # Initialize session state with loaded data
@@ -298,6 +339,14 @@ def create_analytics_charts(total_w, total_v, total_s, location_stats):
 # Main app
 st.markdown("<h1 class='main-header'>⛽ نظام المتابعة الذكية - سوناطراك</h1>", unsafe_allow_html=True)
 
+# Warning for Streamlit Cloud users
+st.markdown("""
+<div class='warning-box'>
+⚠️ <strong>ملاحظة هامة:</strong> في نسخة Streamlit Cloud، البيانات يتم حفظها خلال الجلسة فقط. 
+استخدم خاصية <strong>التصدير والاستيراد</strong> لحفظ بياناتك بشكل دائم.
+</div>
+""", unsafe_allow_html=True)
+
 # Initial setup if contract start is not set
 if not st.session_state.contract_start:
     st.markdown("<div class='initial-setup'>"
@@ -391,7 +440,46 @@ with st.sidebar:
     st.markdown("---")
     
     # Data management
-    with st.expander("⚙️ إدارة البيانات"):
+    with st.expander("⚙️ إدارة البيانات", expanded=True):
+        st.subheader("📤 تصدير البيانات")
+        
+        # Export data
+        if st.button("💾 تصدير نسخة احتياطية", use_container_width=True):
+            data = {
+                'contract_start': st.session_state.contract_start,
+                'initial_balance': st.session_state.initial_balance,
+                'work_periods': st.session_state.work_periods,
+                'sick_periods': st.session_state.sick_periods
+            }
+            st.download_button(
+                label="📥 تحميل ملف النسخ الاحتياطي",
+                data=json.dumps(data, default=str, ensure_ascii=False, indent=2),
+                file_name=f"sonatrach_backup_{datetime.date.today()}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        st.subheader("📥 استيراد البيانات")
+        
+        # Import data
+        uploaded_file = st.file_uploader("اختر ملف النسخ الاحتياطي", type=['json'], key="import_uploader")
+        
+        if uploaded_file is not None:
+            if st.button("🔄 استيراد البيانات", type="secondary", use_container_width=True):
+                with st.spinner("جاري استيراد البيانات..."):
+                    contract_start, initial_balance, work_periods, sick_periods = import_data(uploaded_file)
+                    
+                    if contract_start is not None:
+                        st.session_state.contract_start = contract_start
+                        st.session_state.initial_balance = initial_balance
+                        st.session_state.work_periods = work_periods
+                        st.session_state.sick_periods = sick_periods
+                        save_data()
+                        st.success("✅ تم استيراد البيانات بنجاح!")
+                        st.rerun()
+        
+        st.subheader("🗑️ إدارة الفترات")
+        
         # Delete specific work period
         if st.session_state.work_periods:
             period_options = [f"من {start} إلى {end} - {location}" if location else f"من {start} إلى {end}" 
@@ -403,22 +491,6 @@ with st.sidebar:
                 save_data()
                 st.success("✅ تم حذف فترة العمل")
                 st.rerun()
-        
-        # Export data
-        if st.button("📤 تصدير البيانات", use_container_width=True):
-            data = {
-                'contract_start': st.session_state.contract_start,
-                'initial_balance': st.session_state.initial_balance,
-                'work_periods': st.session_state.work_periods,
-                'sick_periods': st.session_state.sick_periods
-            }
-            st.download_button(
-                label="💾 تحميل ملف النسخ الاحتياطي",
-                data=json.dumps(data, default=str, ensure_ascii=False, indent=2),
-                file_name=f"sonatrach_backup_{datetime.date.today()}.json",
-                mime="application/json",
-                use_container_width=True
-            )
         
         if st.button("🗑️ حذف جميع البيانات", use_container_width=True):
             st.session_state.work_periods = []
@@ -571,30 +643,5 @@ display_calendar(days_dict, selected_year, selected_month)
 # Footer
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #666; padding: 2rem;'>"
-            "⛽ تم التطوير بواسطة عمر بن الشيخ 0666011769"
+            "⛽ نظام المتابعة الذكية لموظفي سوناطراك - نسخة Streamlit Cloud"
             "</div>", unsafe_allow_html=True)
-
-# Instructions for creating EXE
-# with st.expander("🛠️ كيفية تحويل التطبيق إلى ملف EXE"):
-#     st.markdown("""
-#     ### خطوات تحويل التطبيق إلى ملف تنفيذي (EXE):
-#     
-#     1. **تثبيت PyInstaller:**
-#     ```bash
-#     pip install pyinstaller
-#     ```
-#     
-#     2. **حفظ الكود في ملف:** احفظ هذا الكود في ملف باسم `sonatrach_app.py`
-#     
-#     3. **إنشاء ملف EXE:**
-#     ```bash
-#     pyinstaller --onefile --name "SonatrachTracker" sonatrach_app.py
-#     ```
-#     
-#     4. **الملف النهائي:** سيكون الملف التنفيذي في مجلد `dist` باسم `SonatrachTracker.exe`
-#     
-#     5. **ملاحظات مهمة:**
-#     - التطبيق سيحفظ البيانات في نفس مجلد الملف التنفيذي
-#     - يمكنك نقل الملف التنفيذي إلى أي كمبيوتر والعمل عليه
-#     - البيانات ستكون محفوظة حتى إذا نقلت الملف إلى جهاز آخر
-#     """)
